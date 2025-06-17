@@ -1,162 +1,144 @@
-from bs4 import BeautifulSoup
-from matplotlib import markers
+import time
+import numpy as np
 import requests
 import matplotlib.pyplot as plt
-import numpy as np
 from numpy import double, sort
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 year_array = []
 dictionary = {}
 dictionary1 = {}
+
+def fetch_soup(url):
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return BeautifulSoup(response.content, 'lxml')
+        else:
+            raise Exception(f"Fallback to Selenium due to status {response.status_code}")
+    except:
+        print(f"Using Selenium for URL: {url}")
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        driver = webdriver.Chrome(options=options)
+        driver.get(url)
+        time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        driver.quit()
+        return soup
 
 def model(make, name, year, price):
     PRICE = []
     YEAR = []
     MILES = []
     for page in range(1, 3):
-        url = "https://www.pakwheels.com/used-cars/search/-/mk_" + make + "/md_" + name + "/pr_"+ price + "_more/yr_" + year + "_Later/?page="+str(page)
-        pakwheels = requests.get(url).content
-        soup = BeautifulSoup(pakwheels, 'lxml')
+        url = f"https://www.pakwheels.com/used-cars/search/-/mk_{make}/md_{name}/pr_{price}_more/yr_{year}_Later/?page={page}"
+        soup = fetch_soup(url)
 
-        container = soup.find_all('div', class_ = 'col-md-9 grid-style')
+        container = soup.find_all('div', class_='col-md-9 grid-style')
         for cars in container:
+            try:
+                car_name = cars.find('h3').text.strip()
+                car_price = cars.find('div', class_='price-details generic-dark-grey').text.strip()
+                car_info = cars.find('ul', class_='list-unstyled search-vehicle-info-2 fs13')
+                car_details = car_info.find_all('li')
 
-            car_name = cars.find('h3').text.replace('\n', '')
-            car_price = cars.find('div', class_ = 'price-details generic-dark-grey').text.replace('\n','')
-            car_info = cars.find('ul', class_ = 'list-unstyled search-vehicle-info-2 fs13')
-            car_details = car_info.find_all('li')
+                mileage = car_details[1].text.strip()
+                MILES.append(mileage)
+                PRICE.append(car_price)
+                YEAR.append(car_details[0].text.strip())
+            except Exception as e:
+                print(f"Error while parsing car entry: {e}")
 
-            mileage = car_details[1]
-            MILES.append(mileage.text)
-            PRICE.append(car_price)
-            YEAR.append(car_info.find('li').text)
         for x in range(len(PRICE)):
             try:
                 if 'crore' in PRICE[x]:
                     PRICE[x] = double(PRICE[x].replace('PKR', '').replace(' ', '').replace('crore', '')) * 100
                 else:
-                    PRICE[x] = PRICE[x].replace('PKR', '').replace(' ', '').replace('lacs', '')
-                    PRICE[x] = double(PRICE[x])
+                    PRICE[x] = double(PRICE[x].replace('PKR', '').replace(' ', '').replace('lacs', ''))
             except:
-                PRICE[x] = double(PRICE[x])
+                PRICE[x] = 0.0
+
         for y in range(len(MILES)):
             try:
                 MILES[y] = int(MILES[y].replace(' ', '').replace(',', '').replace('km', ''))
             except:
-                MILES[y] = double(MILES[y])
-    index = 0
-    for per_year in YEAR:
-        if per_year not in dictionary:
-            dictionary[per_year] = [MILES[index]]
-        if per_year in dictionary:
-            dictionary[per_year].append(MILES[index])
-        index+=1
-    index = 0
-    for per_year in YEAR:
-        if per_year not in dictionary1:
-            dictionary1[per_year] = [MILES[index]]
-        if per_year in dictionary1:
-            dictionary1[per_year].append(MILES[index])
-        index+=1
+                MILES[y] = 0.0
 
-    year_array = dictionary.keys()
-    year_array = list(year_array)
-    year_array = sort(year_array)
+    for i in range(len(YEAR)):
+        dictionary.setdefault(YEAR[i], []).append(MILES[i])
+        dictionary1.setdefault(YEAR[i], []).append(MILES[i])
+
+    year_array = sort(list(dictionary.keys()))
 
     avg_array = []
     for year in year_array:
         values = dictionary[year]
-        this_sum = 0
-        for value in values:
-            this_sum+=value
-
-        this_avg = this_sum/len(values)
-        avg_array.append(this_avg)
+        avg_array.append(sum(values) / len(values))
 
     avg1_array = []
     for year in year_array:
         values = dictionary1[year]
-        this_sum = 0
-        for value in values:
-            this_sum+=value
-
-        this_avg = this_sum/len(values)
-        avg_array.append(this_avg)
-
+        avg1_array.append(sum(values) / len(values))
 
     return year_array, avg_array, avg1_array
 
 def min_max():
-    year_array = dictionary.keys()
-    year_array = list(year_array)
-    year_array = sort(year_array)
+    year_array = sort(list(dictionary.keys()))
     min_array = []
     max_array = []
     for year in year_array:
         values = dictionary[year]
-
-        mini = min(values)
-        maxi = max(values)
-        min_array.append(mini)
-        max_array.append(maxi)
-
+        min_array.append(min(values))
+        max_array.append(max(values))
     return min_array, max_array, year_array
 
 def parse_minmax():
     mini, maxi, year = min_max()
     x_point = np.array(year)
-    minimum_vals = np.array(mini)
-    maximum_vals = np.array(maxi)
-
-    plt.plot(x_point, minimum_vals, label = 'Minimum Values')
-    plt.plot(x_point, maximum_vals, label = 'Maximum Values')
-    plt.title('Minimum & Maximum Values')
+    plt.plot(x_point, mini, label='Minimum Mileage')
+    plt.plot(x_point, maxi, label='Maximum Mileage')
+    plt.title('Minimum & Maximum Mileage Over Years')
     plt.legend()
     plt.show()
 
 def show_mileagedata(graphdata):
     for data in graphdata:
-        plt.plot(data[0], data[1], label = data[2]+ ' ' +data[3], marker = 'x', markerfacecolor = 'blue')
-        plt.title(data[2]+' '+data[3]+' Mileage Data')
+        plt.plot(data[0], data[1], label=f'{data[2]} {data[3]} Mileage', marker='x')
+        plt.title(f'{data[2]} {data[3]} Mileage Data')
+        plt.legend()
         plt.show()
 
 def main():
-    n = int(input('Enter the execution time: '))
-    i = 1
-    brand1 = []
-    carname1 = []
-    Year = []
-    Price = []
-    comparison  = []
+    n = int(input('Enter number of cars to compare: '))
+    comparison = []
+
+    for _ in range(n):
+        brand = input('Enter car brand: ')
+        name = input('Enter model name: ')
+        year = input('Minimum year model: ')
+        price = input('Minimum price (in lacs): ')
+        comparison.append((brand, name, year, price))
+
     mileage_graphdata = []
-    while i <= n:
-        brand = input('Enter any car brand: ')
-        carname = input('Car Name of the perticular brand: ')
-        Price1 = input('Price of the Perticular Car: ')
-        YearModel = input('Year Model of the Car: ')
-        comparison.append((brand, carname, YearModel, Price1))
-        brand1.append(brand)
-        carname1.append(carname)
-        Price.append(Price1)
-        Year.append(YearModel)
-        i += 1
+
     for car in comparison:
-        year1, avg1, mileage_array = model(car[0], car[1], car[2], car[3])
-        year1 = [int(x) for x in year1]
-        
-        x_point = np.array(year1)
-        y_point = np.array(avg1)
-        y1_point = np.array(mileage_array)
-        mileage_graphdata.append([x_point, y1_point, car[0], car[1]])
-        plt.plot(x_point, y_point, label = car[0]+ ' ' +car[1], marker = 'x', markerfacecolor = 'blue')
+        year_arr, avg_prices, mileage_vals = model(car[0], car[1], car[2], car[3])
+        year_int = [int(x) for x in year_arr]
 
+        plt.plot(year_int, avg_prices, label=f'{car[0]} {car[1]} Avg Price', marker='x')
+        mileage_graphdata.append([year_int, mileage_vals, car[0], car[1]])
+
+    plt.title('Average Car Prices Over Years')
     plt.legend()
-
-    plt.title('Average Prices')
     plt.show()
 
     show_mileagedata(mileage_graphdata)
-
     parse_minmax()
 
-main()
+if __name__ == "__main__":
+    main()
